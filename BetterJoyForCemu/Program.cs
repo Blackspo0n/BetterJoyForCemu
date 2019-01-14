@@ -2,9 +2,6 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
-
-using System.Numerics;
 using System.Threading;
 using System.Runtime.InteropServices;
 using System.Timers;
@@ -14,10 +11,8 @@ using System.Diagnostics;
 
 using static BetterJoyForCemu.HIDapi;
 using Nefarius.ViGEm.Client;
-using Nefarius.ViGEm.Client.Targets;
 using System.Net;
 using System.Configuration;
-using System.Net.Http;
 using System.IO;
 using System.Windows.Forms;
 
@@ -26,29 +21,28 @@ using System.ServiceProcess;
 namespace BetterJoyForCemu {
     public class JoyconManager {
         public bool EnableIMU = true;
-        public bool EnableLocalize = false;
 
         private const ushort vendor_id = 0x57e;
+/*
         private const ushort vendor_id_ = 0x057e;
+*/
         private const ushort product_l = 0x2006;
         private const ushort product_r = 0x2007;
         private const ushort product_pro = 0x2009;
 
         public List<Joycon> j; // Array of all connected Joy-Cons
-        static JoyconManager instance;
+        static JoyconManager _instance;
 
         public MainForm form;
 
         System.Timers.Timer controllerCheck;
 
-        bool useHIDG = Boolean.Parse(ConfigurationManager.AppSettings["UseHIDG"]);
+        public readonly bool useHIDG = Boolean.Parse(ConfigurationManager.AppSettings["UseHIDG"]);
 
-        public static JoyconManager Instance {
-            get { return instance; }
-        }
+        public static JoyconManager Instance => _instance;
 
         public void Awake() {
-            instance = this;
+            _instance = this;
             j = new List<Joycon>();
             HIDapi.hid_init();
         }
@@ -68,29 +62,31 @@ namespace BetterJoyForCemu {
 
         void CleanUp() { // removes dropped controllers from list
             List<Joycon> rem = new List<Joycon>();
-            for (int i = 0; i < j.Count; i++) {
-                Joycon v = j[i];
-                if (v.state == Joycon.state_.DROPPED) {
+            foreach (var v in j)
+            {
+                if (v.State == Joycon.state_.DROPPED) {
                     if (v.other != null)
                         v.other.other = null; // The other of the other is the joycon itself
 
-                    v.Detach(); rem.Add(v);
+                    v.Detach();
+                    rem.Add(v);
 
                     foreach (Button b in form.con) {
-                        if (b.Enabled & b.Tag == v) {
-                            b.Invoke(new MethodInvoker(delegate {
-                                b.Enabled = false;
-                                b.BackgroundImage = Properties.Resources.cross;
-                            }));
-                            break;
-                        }
+                        if (!(b.Enabled & b.Tag == v)) continue;
+
+                        b.Invoke(new MethodInvoker(delegate {
+                            b.Enabled = false;
+                            b.BackgroundImage = Properties.Resources.cross;
+                        }));
+
+                        break;
                     }
 
                     form.AppendTextBox("Removed dropped controller to list. Can be reconnected.\r\n");
                 }
             }
 
-            foreach (Joycon v in rem)
+            foreach (var v in rem)
                 j.Remove(v);
         }
 
@@ -108,10 +104,9 @@ namespace BetterJoyForCemu {
             IntPtr ptr = HIDapi.hid_enumerate(vendor_id, 0x0);
             IntPtr top_ptr = ptr;
 
-            hid_device_info enumerate; // Add device to list
             bool foundNew = false;
             while (ptr != IntPtr.Zero) {
-                enumerate = (hid_device_info)Marshal.PtrToStructure(ptr, typeof(hid_device_info));
+                var enumerate = (hid_device_info)Marshal.PtrToStructure(ptr, typeof(hid_device_info)); // Add device to list
 
                 if ((enumerate.product_id == product_l || enumerate.product_id == product_r || enumerate.product_id == product_pro) && !ControllerAlreadyAdded(enumerate.path)) {
                     switch (enumerate.product_id) {
@@ -162,7 +157,7 @@ namespace BetterJoyForCemu {
                         break;
                     }
 
-                    j.Add(new Joycon(handle, EnableIMU, EnableLocalize & EnableIMU, 0.05f, isLeft, enumerate.path, j.Count, enumerate.product_id == product_pro, enumerate.serial_number == "000000000001"));
+                    j.Add(new Joycon(handle, EnableIMU, isLeft, enumerate.path, j.Count, enumerate.product_id == product_pro, enumerate.serial_number == "000000000001"));
 
                     foundNew = true;
                     j.Last().form = form;
@@ -202,7 +197,7 @@ namespace BetterJoyForCemu {
                     }
 
                     byte[] mac = new byte[6];
-                    for (int n = 0; n < 6; n++)
+                    for (var n = 0; n < 6; n++)
                         mac[n] = byte.Parse(enumerate.serial_number.Substring(n * 2, 2), System.Globalization.NumberStyles.HexNumber);
                     j[j.Count - 1].PadMacAddress = new PhysicalAddress(mac);
                 }
@@ -212,7 +207,7 @@ namespace BetterJoyForCemu {
 
             int found = 0;
             int minPadID = 10;
-            foreach (Joycon v in j) { // current system is designed for a maximum of two joycons connected to the PC
+            foreach (var v in j) { // current system is designed for a maximum of two joycons connected to the PC
                 if (!v.isPro) {
                     found++;
                     minPadID = Math.Min(v.PadId, minPadID);
@@ -223,7 +218,7 @@ namespace BetterJoyForCemu {
             if (found == 2 && foundNew) {
                 form.AppendTextBox("Both joycons successfully found.\r\n");
                 Joycon temp = null;
-                foreach (Joycon v in j) {
+                foreach (var v in j) {
                     if (!v.isPro) {
                         v.LED = (byte)(0x1 << minPadID);
 
@@ -237,13 +232,11 @@ namespace BetterJoyForCemu {
                             temp.xin = null;
                         }
 
-                        foreach (Button b in form.con) {
-                            if (b.Tag == v) {
-                                if (v.isLeft)
-                                    b.BackgroundImage = Properties.Resources.jc_left;
-                                else
-                                    b.BackgroundImage = Properties.Resources.jc_right;
-                            }
+                        foreach (Button b in form.con)
+                        {
+                            if (b.Tag != v) continue;
+
+                            b.BackgroundImage = v.isLeft ? Properties.Resources.jc_left : Properties.Resources.jc_right;
                         }
                     }
                 } // Join up the two joycons
@@ -252,9 +245,8 @@ namespace BetterJoyForCemu {
             HIDapi.hid_free_enumeration(top_ptr);
 
             foreach (Joycon jc in j) { // Connect device straight away
-                if (jc.state == Joycon.state_.NOT_ATTACHED) {
-                    if (jc.xin != null)
-                        jc.xin.Connect();
+                if (jc.State == Joycon.state_.NOT_ATTACHED) {
+                    jc.xin?.Connect();
 
                     jc.Attach(leds_: jc.LED);
                     jc.Begin();
@@ -262,19 +254,20 @@ namespace BetterJoyForCemu {
             }
         }
 
-        public void Update() {
-            for (int i = 0; i < j.Count; ++i)
-                j[i].Update();
+        public void Update()
+        {
+            foreach (var joycon in j)
+                joycon.Update();
         }
 
         public void OnApplicationQuit() {
             foreach (Joycon v in j) {
                 v.Detach();
 
-                if (v.xin != null) {
-                    v.xin.Disconnect();
-                    v.xin.Dispose();
-                }
+                if (v.xin == null) continue;
+
+                v.xin.Disconnect();
+                v.xin.Dispose();
             }
 
             controllerCheck.Stop();
@@ -284,7 +277,7 @@ namespace BetterJoyForCemu {
 
     // Custom timer class because system timers have a limit of 15.6ms
     class HighResTimer {
-        double interval = 0;
+        readonly double interval = 0;
         double frequency = 0;
 
         Thread thread;
@@ -303,8 +296,10 @@ namespace BetterJoyForCemu {
 
         public void Start() {
             run = true;
-            thread = new Thread(new ThreadStart(Run));
-            thread.IsBackground = true;
+            thread = new Thread(new ThreadStart(Run))
+            {
+                IsBackground = true
+            };
             thread.Start();
         }
 
@@ -328,8 +323,6 @@ namespace BetterJoyForCemu {
 
         public static ViGEmClient emClient;
 
-        private static readonly HttpClient client = new HttpClient();
-
         public static JoyconManager mgr;
         static HighResTimer timer;
         static string pid;
@@ -345,16 +338,12 @@ namespace BetterJoyForCemu {
                 try {
                     var HidCerberusService = new ServiceController("HidCerberus Service");
                     if (HidCerberusService.Status == ServiceControllerStatus.Stopped) {
-                        form.console.Text += "HidGuardian was stopped. Starting...\r\n";
-
-                        try {
-                            HidCerberusService.Start();
-                        } catch (Exception e) {
-                            form.console.Text += "Unable to start HidGuardian - everything should work fine without it, but if you need it, run the app again as an admin.\r\n";
-                        }
+                        form.AppendTextBox("HidGuardian was stopped. Starting...");
+                        
+                         HidCerberusService.Start();
                     }
-                } catch (Exception e) {
-                    form.console.Text += "Unable to start HidGuardian - everything should work fine without it, but if you need it, install it properly as admin.\r\n";
+                } catch (Exception) {
+                    form.AppendTextBox("Unable to start HidGuardian - everything should work fine without it, but if you need it, install it properly as admin.");
                 }
 
                 HttpWebResponse response;
@@ -362,17 +351,17 @@ namespace BetterJoyForCemu {
                     try {
                         response = (HttpWebResponse)WebRequest.Create(@"http://localhost:26762/api/v1/hidguardian/whitelist/purge/").GetResponse(); // remove all programs allowed to see controller
                     } catch (Exception e) {
-                        form.console.Text += "Unable to purge whitelist.\r\n";
+                        form.AppendTextBox("Unable to purge whitelist.");
                     }
                 }
 
                 try {
                     response = (HttpWebResponse)WebRequest.Create(@"http://localhost:26762/api/v1/hidguardian/whitelist/add/" + pid).GetResponse(); // add BetterJoyForCemu to allowed processes 
                 } catch (Exception e) {
-                    form.console.Text += "Unable to add program to whitelist.\r\n";
+                    form.AppendTextBox("Unable to add program to whitelist.");
                 }
             } else {
-                form.console.Text += "HidGuardian is disabled.\r\n";
+                form.AppendTextBox("HidGuardian is disabled.");
             }
 
             emClient = new ViGEmClient(); // Manages emulated XInput
@@ -380,7 +369,7 @@ namespace BetterJoyForCemu {
             foreach (NetworkInterface nic in NetworkInterface.GetAllNetworkInterfaces()) {
                 // Get local BT host MAC
                 if (nic.NetworkInterfaceType != NetworkInterfaceType.FastEthernetFx && nic.NetworkInterfaceType != NetworkInterfaceType.Wireless80211) {
-                    if (nic.Name.Split()[0] == "Bluetooth") {
+                    if (nic.Name.Contains("Bluetooth")) {
                         btMAC = nic.GetPhysicalAddress();
                     }
                 }
@@ -395,25 +384,24 @@ namespace BetterJoyForCemu {
             server = new UdpServer(mgr.j);
             server.form = form;
 
-            server.Start(IPAddress.Parse(ConfigurationManager.AppSettings["IP"]), Int32.Parse(ConfigurationManager.AppSettings["Port"]));
+            server.Start(IPAddress.Parse(ConfigurationManager.AppSettings["IP"]), int.Parse(ConfigurationManager.AppSettings["Port"]));
             timer = new HighResTimer(pollsPerSecond, new HighResTimer.ActionDelegate(mgr.Update));
             timer.Start();
 
-            form.console.Text += "All systems go\r\n";
+            form.AppendTextBox("All systems go");
         }
 
         public static void Stop() {
             try {
                 HttpWebResponse response = (HttpWebResponse)WebRequest.Create(@"http://localhost:26762/api/v1/hidguardian/whitelist/remove/" + pid).GetResponse();
             } catch (Exception e) {
-                form.console.Text += "Unable to remove program from whitelist.\r\n";
+                form.AppendTextBox("Unable to remove program from whitelist.");
             }
 
             server.Stop();
             timer.Stop();
             mgr.OnApplicationQuit();
-
-            form.console.Text += "";
+            
         }
 
         static void Main(string[] args) {
